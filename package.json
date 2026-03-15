@@ -2,11 +2,15 @@
     "name": "ag-manager",
     "displayName": "AG Manager",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.1.0",
-    "publisher": "anonymous",
+    "version": "1.1.1",
+    "publisher": "BiViPi",
     "author": {
-        "name": "Anonymous",
-        "email": ""
+        "name": "BiViPi",
+        "url": "https://github.com/BiViPi"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/BiViPi/AG-Manager.git"
     },
     "icon": "logo/logo.png",
     "engines": {

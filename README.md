@@ -14,7 +14,7 @@ Many community extensions for Antigravity have been found to contain malicious c
 - 📊 **Dynamic Dashboard**: Real-time progress bars for all your active models (Gemini, Claude, GPT-OSS).
 - 🕒 **Accurate Resets**: Detailed "Refreshes in..." timers matching the Antigravity system accurately.
 - ⚡ **Status Bar Integration**: Keep an eye on your most critical quota directly in the status bar.
-- 🎯 **Auto Click & Scroll**: Automatically click approval buttons (Run, Allow, Accept) and keep the chat scrolled to the bottom.
+- 🎯 **Auto Click**: Automatically click approval buttons (Run, Allow, Accept).
 - 💎 **Premium UI**: Modern Glassmorphism design that feels native and premium.
 
 ---
@@ -33,14 +33,14 @@ Nhiều extension cộng đồng cho Antigravity đã bị phát hiện chứa m
 - 📊 **Bảng điều khiển động**: Thanh tiến trình thời gian thực cho tất cả các mô hình đang hoạt động (Gemini, Claude, GPT-OSS).
 - 🕒 **Thời gian Reset chính xác**: Đồng hồ đếm ngược "Refreshes in..." khớp hoàn toàn với hệ thống Antigravity.
 - ⚡ **Tích hợp Thanh trạng thái**: Theo dõi hạn mức quan trọng nhất ngay tại thanh trạng thái.
-- 🎯 **Auto Click & Scroll**: Tự động nhấn các nút xác nhận (Run, Allow, Accept...) và tự động cuộn khung chat xuống dưới cùng.
+- 🎯 **Auto Click**: Tự động nhấn các nút xác nhận (Run, Allow, Accept...).
 - 💎 **Giao diện cao cấp**: Thiết kế Glassmorphism hiện đại mang lại cảm giác xịn xò và mượt mà.
 
 ## 📦 Cài đặt (Installation)
 1. Trong Antigravity, nhấn `Ctrl + Shift + P`.
 2. Gõ và chọn **"Install from VSIX..."**.
-3. Chọn file `ag-manager-1.1.0.vsix`.
+3. Chọn file `ag-manager-1.1.1.vsix`.
 4. Nhấn biểu tượng Dashboard ở thanh bên trái để bắt đầu!
 
 ---
-*Developed with ❤️ by Anonymous.*
+*Developed with ❤️ by BiViPi.*

@@ -22,7 +22,7 @@ export class AutomationService {
     private _rules: string[] = ['Run', 'Allow', 'Accept', 'Always Allow', 'Keep Waiting', 'Retry', 'Continue', 'Allow Once', 'Accept all'];
     private _metrics: Record<string, number> = {};
     private _history: any[] = [];
-    private _config = { scanDelay: 1000, scrollDelay: 500, restPeriod: 7000 };
+    private _config = { scanDelay: 1000, restPeriod: 7000 };
 
     constructor(context: vscode.ExtensionContext) {
         this._context = context;

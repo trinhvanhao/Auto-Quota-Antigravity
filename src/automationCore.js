@@ -1,7 +1,7 @@
 (function () {
     /**
      * AG Automation Bridge - Core Logic
-     * Chịu trách nhiệm quan sát UI và thực thi click/scroll tự động.
+     * Chịu trách nhiệm quan sát UI và thực thi click tự động.
      */
 
     let config = {
@@ -13,8 +13,6 @@
 
     const state = {
         clickedElements: new WeakSet(),
-        lastScrollTop: 0,
-        isUserScrolling: false,
         pendingStats: {}
     };
 
@@ -116,21 +114,6 @@
         }
     }
 
-    // 3. Smart Scrolling
-    function handleAutoScroll() {
-        if (!config.active) return;
-
-        const scrollables = document.querySelectorAll('.monaco-scrollable-element');
-        scrollables.forEach(el => {
-            // Chỉ cuộn các khung có vẻ là khung chat (dựa trên class hoặc context)
-            if (el.innerText.length > 500 && el.scrollHeight > el.clientHeight) {
-                const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-                if (!isAtBottom) {
-                    el.scrollTop = el.scrollHeight;
-                }
-            }
-        });
-    }
 
     // 4. Activity Logger
     function logToHost(payload) {
@@ -144,7 +127,6 @@
     setInterval(syncWithHost, 5000);
     setInterval(() => {
         executeAutomation();
-        handleAutoScroll();
     }, config.scanInterval);
 
     console.log('[AG-Automation] Bridge initialized successfully.');

@@ -284,10 +284,10 @@ var AutomationService = class _AutomationService {
   _port = 0;
   // Automation States
   _isActive = true;
-  _rules = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once"];
+  _rules = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once", "Accept all"];
   _metrics = {};
   _history = [];
-  _config = { scanDelay: 1e3, scrollDelay: 500, restPeriod: 7e3 };
+  _config = { scanDelay: 1e3, restPeriod: 7e3 };
   constructor(context) {
     this._context = context;
     this.syncState();
