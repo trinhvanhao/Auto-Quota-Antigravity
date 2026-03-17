@@ -193,6 +193,13 @@ function createGauge(quota) {
     // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
     const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
 
+    // [MODIFIED] Directionality: Up (Clockwise) or Down (Counter-clockwise)
+    // Default is down (counter-clockwise) for Antigravity & Codex
+    const isDown = quota.direction === 'down' || quota.direction === undefined;
+    const transform = isDown
+        ? "rotate(-90 40 40) scale(-1, 1) translate(-80, 0)" // Counter-clockwise mirror
+        : "rotate(-90 40 40)";                             // Clockwise
+
     return `
         <div class="gauge-item">
             <svg class="gauge-svg" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
@@ -201,7 +208,7 @@ function createGauge(quota) {
                     stroke="${quota.themeColor}"
                     stroke-dasharray="${dash}"
                     stroke-dashoffset="0"
-                    transform="rotate(-90 40 40)"/>
+                    transform="${transform}"/>
                 <text class="gauge-pct" x="40" y="40">${centerText}</text>
             </svg>
             <div class="gauge-label">${shortLabel(quota.label)}</div>

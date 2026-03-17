@@ -8,6 +8,8 @@ let latestQuotaData: any = null;
 let globalSidebarProvider: SidebarProvider | null = null;
 let globalContext: vscode.ExtensionContext | null = null;
 let automationService: AutomationService | null = null;
+let refreshTimer: NodeJS.Timeout | null = null;
+const notifiedModels = new Set<string>();
 
 const GROUPS = [
     { id: 'g1', title: 'GEMINI 3.1 PRO', models: ['Gemini 3.1 Pro (High)', 'Gemini 3.1 Pro (Low)'] },
@@ -50,6 +52,29 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initial fetch
     setTimeout(() => { if (globalSidebarProvider) globalSidebarProvider.updateData(); }, 2000);
+
+    // [V10] Auto-refresh
+    startAutoRefresh();
+
+    // Re-start refresh on config change
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration("sqm.refreshInterval")) {
+            startAutoRefresh();
+        }
+    }));
+}
+
+function getQuotaColor(pct: number, direction: 'up' | 'down' = 'down'): { hex: string, dot: string } {
+    if (direction === 'up') {
+        // Counting UP (Usage) - Orange low, Red high
+        if (pct < 80) return { hex: '#FFAB40', dot: '🟠' };
+        return { hex: '#ef4444', dot: '🔴' };
+    } else {
+        // Counting DOWN (Remaining) - Green high, Red low
+        if (pct > 50) return { hex: '#10b981', dot: '🟢' };
+        if (pct > 20) return { hex: '#f59e0b', dot: '🟡' };
+        return { hex: '#ef4444', dot: '🔴' };
+    }
 }
 
 function formatTime(t: string): string {
@@ -81,27 +106,37 @@ function buildTooltipSVG(data: any): string {
 
         quotas.forEach((q: any) => {
             const pct = Math.round(q.remaining);
-            const dotColor = pct > 50 ? '#10b981' : (pct > 20 ? '#f59e0b' : '#ef4444');
+            const color = getQuotaColor(pct, q.direction || 'down');
             const time = formatTime(q.resetTime);
 
             // Row Highlight
             contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
 
             // Dot
-            contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${dotColor}"/>`;
+            contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
 
             // Model Name
             const cleanName = q.label.replace(' (Thinking)', '').replace(' (Medium)', '');
             contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
 
-            // Segmented Bar
+            // Progress Bar (Fluid HP style or Segmented)
             const barX = 180;
-            const segWidth = 10;
-            const segGap = 2;
-            const filled = Math.min(5, Math.ceil(pct / 20));
-            for (let i = 0; i < 5; i++) {
-                const opacity = i < filled ? 0.9 : 0.15;
-                contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || '#4B5563'}" fill-opacity="${opacity}"/>`;
+            const barWidth = 60; // 5 * 10 + 4 * 2 = 58 approx, let's use 60
+
+            if (q.style === 'fluid') {
+                // Fluid HP Bar
+                const fillWidth = (pct / 100) * barWidth;
+                contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.1"/>`;
+                contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${q.themeColor || '#4B5563'}" fill-opacity="0.9"/>`;
+            } else {
+                // Segmented Bar (Default for Antigravity)
+                const segWidth = 10;
+                const segGap = 2;
+                const filled = Math.min(5, Math.ceil(pct / 20));
+                for (let i = 0; i < 5; i++) {
+                    const opacity = i < filled ? 0.9 : 0.15;
+                    contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || '#4B5563'}" fill-opacity="${opacity}"/>`;
+                }
             }
 
             // Fixed alignment for Pct & Time
@@ -167,15 +202,15 @@ function refreshStatusBar() {
     // 2. Claude (if authenticated)
     if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
         const cQuota = latestQuotaData.claude.quotas[0];
-        const dot = cQuota.remaining > 50 ? '🟢' : (cQuota.remaining > 20 ? '🟡' : '🔴');
-        groupsText += `  🚀 Claude ${dot}`;
+        const color = getQuotaColor(cQuota.remaining, 'up');
+        groupsText += `  Claude ${color.dot}`;
     }
 
     // 3. Codex (if authenticated)
     if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
         const cxQuota = latestQuotaData.codex.quotas[0];
-        const dot = cxQuota.remaining > 50 ? '🟢' : (cxQuota.remaining > 20 ? '🟡' : '🔴');
-        groupsText += `  🧠 Codex ${dot}`;
+        const color = getQuotaColor(cxQuota.remaining, 'down');
+        groupsText += `  Codex ${color.dot}`;
     }
 
     statusBarItem.text = `$(dashboard)  ${groupsText || 'AG Manager'}`;
@@ -199,6 +234,65 @@ export function setLatestData(data: any) {
         const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
         globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
     }
+    // [V10] Check for low quotas
+    checkNotifications(data);
+}
+
+function startAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+
+    const config = vscode.workspace.getConfiguration("sqm");
+    const intervalMins = config.get<number>("refreshInterval") || 5;
+
+    refreshTimer = setInterval(() => {
+        if (globalSidebarProvider) globalSidebarProvider.updateData();
+    }, intervalMins * 60 * 1000);
+}
+
+function checkNotifications(data: any) {
+    const config = vscode.workspace.getConfiguration("sqm");
+    if (!config.get<boolean>("enableNotifications")) return;
+
+    const checkQuota = (serviceName: string, quotas: any[]) => {
+        if (!quotas) return;
+        quotas.forEach(q => {
+            const modelKey = `${serviceName}-${q.label}`;
+            if (notifiedModels.has(modelKey)) return;
+
+            const isClaude = serviceName === 'Claude';
+            const pct = Math.round(q.remaining);
+
+            let shouldNotify = false;
+            let message = "";
+
+            if (isClaude) {
+                // Claude counts UP (usage)
+                if (pct >= 80) {
+                    shouldNotify = true;
+                    message = `Claude [${q.label}] usage is high (${pct}%).`;
+                }
+            } else {
+                // Antigravity/Codex count DOWN (remaining)
+                if (pct <= 20) {
+                    shouldNotify = true;
+                    message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+                }
+            }
+
+            if (shouldNotify) {
+                vscode.window.showWarningMessage(message, "Dashboard").then(selection => {
+                    if (selection === "Dashboard") {
+                        vscode.commands.executeCommand("sqm.sidebar.focus");
+                    }
+                });
+                notifiedModels.add(modelKey);
+            }
+        });
+    };
+
+    if (data.antigravity?.quotas) checkQuota("Antigravity", data.antigravity.quotas);
+    if (data.claude?.quotas) checkQuota("Claude", data.claude.quotas);
+    if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
 }
 
 export function deactivate() { }

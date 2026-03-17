@@ -269,8 +269,8 @@ var QuotaService = class {
         email: status.email || "",
         tier: status.subscriptionType || "Pro",
         quotas: [
-          { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40" },
-          { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043" }
+          { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40", style: "fluid", direction: "up" },
+          { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043", style: "fluid", direction: "up" }
         ],
         isAuthenticated: true
       };
@@ -302,8 +302,8 @@ var QuotaService = class {
         email: "Logged In",
         tier: "ChatGPT",
         quotas: [
-          { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE" },
-          { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676" }
+          { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE", style: "fluid", direction: "down" },
+          { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676", style: "fluid", direction: "down" }
         ],
         isAuthenticated: true
       };
@@ -618,6 +618,8 @@ var latestQuotaData = null;
 var globalSidebarProvider = null;
 var globalContext = null;
 var automationService = null;
+var refreshTimer = null;
+var notifiedModels = /* @__PURE__ */ new Set();
 var GROUPS = [
   { id: "g1", title: "GEMINI 3.1 PRO", models: ["Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"] },
   { id: "g2", title: "GEMINI 3 FLASH", models: ["Gemini 3 Flash"] },
@@ -652,6 +654,22 @@ function activate(context) {
   setTimeout(() => {
     if (globalSidebarProvider) globalSidebarProvider.updateData();
   }, 2e3);
+  startAutoRefresh();
+  context.subscriptions.push(vscode4.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration("sqm.refreshInterval")) {
+      startAutoRefresh();
+    }
+  }));
+}
+function getQuotaColor(pct, direction = "down") {
+  if (direction === "up") {
+    if (pct < 80) return { hex: "#FFAB40", dot: "\u{1F7E0}" };
+    return { hex: "#ef4444", dot: "\u{1F534}" };
+  } else {
+    if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
+    if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
+    return { hex: "#ef4444", dot: "\u{1F534}" };
+  }
 }
 function formatTime(t) {
   const hMatch = t.match(/(\d+)h/);
@@ -675,19 +693,26 @@ function buildTooltipSVG(data) {
     currentY += groupHeaderHeight;
     quotas.forEach((q) => {
       const pct = Math.round(q.remaining);
-      const dotColor = pct > 50 ? "#10b981" : pct > 20 ? "#f59e0b" : "#ef4444";
+      const color = getQuotaColor(pct, q.direction || "down");
       const time = formatTime(q.resetTime);
       contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
-      contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${dotColor}"/>`;
+      contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
       const cleanName = q.label.replace(" (Thinking)", "").replace(" (Medium)", "");
       contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
       const barX = 180;
-      const segWidth = 10;
-      const segGap = 2;
-      const filled = Math.min(5, Math.ceil(pct / 20));
-      for (let i = 0; i < 5; i++) {
-        const opacity = i < filled ? 0.9 : 0.15;
-        contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || "#4B5563"}" fill-opacity="${opacity}"/>`;
+      const barWidth = 60;
+      if (q.style === "fluid") {
+        const fillWidth = pct / 100 * barWidth;
+        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.1"/>`;
+        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${q.themeColor || "#4B5563"}" fill-opacity="0.9"/>`;
+      } else {
+        const segWidth = 10;
+        const segGap = 2;
+        const filled = Math.min(5, Math.ceil(pct / 20));
+        for (let i = 0; i < 5; i++) {
+          const opacity = i < filled ? 0.9 : 0.15;
+          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || "#4B5563"}" fill-opacity="${opacity}"/>`;
+        }
       }
       const pctX = 250;
       const centerText = q.displayValue !== void 0 ? q.displayValue : `${pct}%`;
@@ -734,13 +759,13 @@ function refreshStatusBar() {
   }
   if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
     const cQuota = latestQuotaData.claude.quotas[0];
-    const dot = cQuota.remaining > 50 ? "\u{1F7E2}" : cQuota.remaining > 20 ? "\u{1F7E1}" : "\u{1F534}";
-    groupsText += `  \u{1F680} Claude ${dot}`;
+    const color = getQuotaColor(cQuota.remaining, "up");
+    groupsText += `  Claude ${color.dot}`;
   }
   if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
     const cxQuota = latestQuotaData.codex.quotas[0];
-    const dot = cxQuota.remaining > 50 ? "\u{1F7E2}" : cxQuota.remaining > 20 ? "\u{1F7E1}" : "\u{1F534}";
-    groupsText += `  \u{1F9E0} Codex ${dot}`;
+    const color = getQuotaColor(cxQuota.remaining, "down");
+    groupsText += `  Codex ${color.dot}`;
   }
   statusBarItem.text = `$(dashboard)  ${groupsText || "AG Manager"}`;
   const svg = buildTooltipSVG(latestQuotaData);
@@ -761,6 +786,52 @@ function setLatestData(data) {
     const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
     globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
   }
+  checkNotifications(data);
+}
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  const config = vscode4.workspace.getConfiguration("sqm");
+  const intervalMins = config.get("refreshInterval") || 5;
+  refreshTimer = setInterval(() => {
+    if (globalSidebarProvider) globalSidebarProvider.updateData();
+  }, intervalMins * 60 * 1e3);
+}
+function checkNotifications(data) {
+  const config = vscode4.workspace.getConfiguration("sqm");
+  if (!config.get("enableNotifications")) return;
+  const checkQuota = (serviceName, quotas) => {
+    if (!quotas) return;
+    quotas.forEach((q) => {
+      const modelKey = `${serviceName}-${q.label}`;
+      if (notifiedModels.has(modelKey)) return;
+      const isClaude = serviceName === "Claude";
+      const pct = Math.round(q.remaining);
+      let shouldNotify = false;
+      let message = "";
+      if (isClaude) {
+        if (pct >= 80) {
+          shouldNotify = true;
+          message = `Claude [${q.label}] usage is high (${pct}%).`;
+        }
+      } else {
+        if (pct <= 20) {
+          shouldNotify = true;
+          message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+        }
+      }
+      if (shouldNotify) {
+        vscode4.window.showWarningMessage(message, "Dashboard").then((selection) => {
+          if (selection === "Dashboard") {
+            vscode4.commands.executeCommand("sqm.sidebar.focus");
+          }
+        });
+        notifiedModels.add(modelKey);
+      }
+    });
+  };
+  if (data.antigravity?.quotas) checkQuota("Antigravity", data.antigravity.quotas);
+  if (data.claude?.quotas) checkQuota("Claude", data.claude.quotas);
+  if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
 }
 function deactivate() {
 }

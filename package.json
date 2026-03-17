@@ -2,7 +2,7 @@
     "name": "ag-manager",
     "displayName": "AG Manager",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.1.1",
+    "version": "1.2.1",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -52,6 +52,24 @@
         "configuration": {
             "title": "AG Manager",
             "properties": {
+                "sqm.refreshInterval": {
+                    "type": "number",
+                    "default": 5,
+                    "enum": [
+                        1,
+                        2,
+                        5,
+                        10,
+                        15,
+                        30
+                    ],
+                    "description": "Auto-refresh interval in minutes (default is 5)"
+                },
+                "sqm.enableNotifications": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable notifications for low quotas"
+                },
                 "ag-manager.automation.enabled": {
                     "type": "boolean",
                     "default": true,

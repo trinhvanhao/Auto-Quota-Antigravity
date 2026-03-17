@@ -273,8 +273,8 @@ class QuotaService {
                 email: status.email || "",
                 tier: status.subscriptionType || "Pro",
                 quotas: [
-                    { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40" },
-                    { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043" }
+                    { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40", style: 'fluid', direction: 'up' },
+                    { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043", style: 'fluid', direction: 'up' }
                 ],
                 isAuthenticated: true
             };
@@ -309,8 +309,8 @@ class QuotaService {
                 email: "Logged In",
                 tier: "ChatGPT",
                 quotas: [
-                    { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE" },
-                    { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676" }
+                    { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE", style: 'fluid', direction: 'down' },
+                    { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676", style: 'fluid', direction: 'down' }
                 ],
                 isAuthenticated: true
             };
