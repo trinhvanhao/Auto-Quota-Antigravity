@@ -41,7 +41,10 @@ button#refresh-btn {
     cursor: pointer;
     transition: opacity 0.15s;
 }
-button#refresh-btn:hover { opacity: 0.85; }
+
+button#refresh-btn:hover {
+    opacity: 0.85;
+}
 
 /* User Card */
 .user-card {
@@ -145,12 +148,35 @@ button#refresh-btn:hover { opacity: 0.85; }
 }
 
 /* States */
-.loading, .error-msg {
+.loading,
+.error-msg {
     text-align: center;
     padding: 20px 8px;
     opacity: 0.6;
     font-size: 12px;
     line-height: 1.6;
+}
+
+/* [ADDED] Service Group (Antigravity / Claude / Codex sections) */
+.service-group {
+    margin-bottom: 20px;
+}
+
+.group-header {
+    font-size: 10px;
+    font-weight: 800;
+    color: #4B5563;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+    padding-left: 2px;
+    text-transform: uppercase;
+}
+
+.service-info {
+    font-size: 10px;
+    opacity: 0.5;
+    margin-bottom: 8px;
+    padding-left: 2px;
 }
 
 /* Automation Suite Redesign */
@@ -277,5 +303,3 @@ button#refresh-btn:hover { opacity: 0.85; }
     font-weight: 600;
     color: #9CA3AF;
 }
-
-

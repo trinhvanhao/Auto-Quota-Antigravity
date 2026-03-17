@@ -71,15 +71,15 @@ function buildTooltipSVG(data: any): string {
     let contentHtml = '';
     let currentY = padding + 5;
 
-    GROUPS.forEach((group) => {
-        const members = data.quotas.filter((q: any) => group.models.includes(q.label));
-        if (members.length === 0) return;
+    // Helper to render a group section
+    const renderGroupSection = (title: string, quotas: any[]) => {
+        if (!quotas || quotas.length === 0) return;
 
         // Group Header
-        contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${group.title}</text>`;
+        contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${title}</text>`;
         currentY += groupHeaderHeight;
 
-        members.forEach((q: any) => {
+        quotas.forEach((q: any) => {
             const pct = Math.round(q.remaining);
             const dotColor = pct > 50 ? '#10b981' : (pct > 20 ? '#f59e0b' : '#ef4444');
             const time = formatTime(q.resetTime);
@@ -94,22 +94,23 @@ function buildTooltipSVG(data: any): string {
             const cleanName = q.label.replace(' (Thinking)', '').replace(' (Medium)', '');
             contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
 
-            // Segmented Bar (Aligned to specific X)
+            // Segmented Bar
             const barX = 180;
             const segWidth = 10;
             const segGap = 2;
             const filled = Math.min(5, Math.ceil(pct / 20));
             for (let i = 0; i < 5; i++) {
                 const opacity = i < filled ? 0.9 : 0.15;
-                contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor}" fill-opacity="${opacity}"/>`;
+                contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || '#4B5563'}" fill-opacity="${opacity}"/>`;
             }
 
             // Fixed alignment for Pct & Time
-            const pctX = 250; // Shifted right and anchor=start
-            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${pct}%</text>`;
+            const pctX = 250;
+            const centerText = q.displayValue !== undefined ? q.displayValue : `${pct}%`;
+            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${centerText}</text>`;
 
             const fullTime = `${time} ${q.absResetTime || ''}`.trim();
-            const timeX = 285; // Move time closer to percentage
+            const timeX = 285;
             contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${fullTime}</text>`;
 
             currentY += rowHeight;
@@ -118,7 +119,23 @@ function buildTooltipSVG(data: any): string {
         // Small spacing between groups
         contentHtml += `<line x1="${padding}" y1="${currentY - 5}" x2="${width - padding}" y2="${currentY - 5}" stroke="#2D333D" stroke-width="1" stroke-opacity="0.5"/>`;
         currentY += 4;
-    });
+    };
+
+    // Render sections for each service
+    if (data.antigravity?.quotas) {
+        GROUPS.forEach(group => {
+            const members = data.antigravity.quotas.filter((q: any) => group.models.includes(q.label));
+            renderGroupSection(group.title, members);
+        });
+    }
+
+    if (data.claude?.quotas) {
+        renderGroupSection("CLAUDE CODE", data.claude.quotas);
+    }
+
+    if (data.codex?.quotas) {
+        renderGroupSection("CODEX", data.codex.quotas);
+    }
 
     const totalHeight = currentY + 5;
 
@@ -130,19 +147,38 @@ function buildTooltipSVG(data: any): string {
 }
 
 function refreshStatusBar() {
-    if (!latestQuotaData?.quotas?.length) return;
+    if (!latestQuotaData) return;
 
-    // Status bar text - Thêm icon dot theo từng group (Unicode 🟢, 🟡, 🔴)
-    const groupsText = GROUPS.map(g => {
-        const members = latestQuotaData.quotas.filter((q: any) => g.models.includes(q.label));
-        if (members.length === 0) return '';
-        const avg = members.reduce((acc: number, curr: any) => acc + curr.remaining, 0) / members.length;
-        const short = g.id === 'g1' ? 'Pro' : (g.id === 'g2' ? 'Flash' : 'C/G');
-        const dot = avg > 50 ? '🟢' : (avg > 20 ? '🟡' : '🔴');
-        return `${dot} ${short} ${Math.round(avg)}%`;
-    }).filter(t => t !== '').join('  |  ');
+    // Status bar text - Sum up or aggregate from all services
+    let groupsText = "";
 
-    statusBarItem.text = `$(dashboard)  ${groupsText}`;
+    // 1. Antigravity Groups
+    if (latestQuotaData.antigravity?.quotas) {
+        groupsText += GROUPS.map(g => {
+            const members = latestQuotaData.antigravity.quotas.filter((q: any) => g.models.includes(q.label));
+            if (members.length === 0) return '';
+            const avg = members.reduce((acc: number, curr: any) => acc + curr.remaining, 0) / members.length;
+            const short = g.id === 'g1' ? 'Pro' : (g.id === 'g2' ? 'Flash' : 'C/G');
+            const dot = avg > 50 ? '🟢' : (avg > 20 ? '🟡' : '🔴');
+            return `${dot} ${short} ${Math.round(avg)}%`;
+        }).filter(t => t !== '').join('  |  ');
+    }
+
+    // 2. Claude (if authenticated)
+    if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
+        const cQuota = latestQuotaData.claude.quotas[0];
+        const dot = cQuota.remaining > 50 ? '🟢' : (cQuota.remaining > 20 ? '🟡' : '🔴');
+        groupsText += `  🚀 Claude ${dot}`;
+    }
+
+    // 3. Codex (if authenticated)
+    if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
+        const cxQuota = latestQuotaData.codex.quotas[0];
+        const dot = cxQuota.remaining > 50 ? '🟢' : (cxQuota.remaining > 20 ? '🟡' : '🔴');
+        groupsText += `  🧠 Codex ${dot}`;
+    }
+
+    statusBarItem.text = `$(dashboard)  ${groupsText || 'AG Manager'}`;
 
     // Beautiful Tooltip
     const svg = buildTooltipSVG(latestQuotaData);
@@ -150,7 +186,8 @@ function refreshStatusBar() {
 
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})\n\n`);
-    tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;**${latestQuotaData.name}** · [Open Dashboard](command:sqm.sidebar.focus)`);
+    const name = latestQuotaData.antigravity?.name || "User";
+    tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;**${name}** · [Dashboard](command:sqm.sidebar.focus)`);
     tooltip.isTrusted = true;
     statusBarItem.tooltip = tooltip;
 }

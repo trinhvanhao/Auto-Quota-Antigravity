@@ -21,6 +21,8 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
     vscode.postMessage({ type: 'onRefresh' });
 });
 
+// [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
+// Old: data was UserStatus directly. New: data.antigravity = UserStatus | null
 function renderDashboard(data) {
     if (!data) {
         document.getElementById('user-info').innerHTML = '';
@@ -28,23 +30,69 @@ function renderDashboard(data) {
         return;
     }
 
-    document.getElementById('user-info').innerHTML = `
-        <div class="user-card">
-            <div class="avatar">${data.name.charAt(0)}</div>
-            <div class="user-details">
-                <div class="user-name">${data.name}</div>
-                <div class="user-sub">${data.tier} • ${data.email}</div>
+    // --- Antigravity user card (unchanged logic, uses data.antigravity) ---
+    const ag = data.antigravity;
+    if (ag) {
+        document.getElementById('user-info').innerHTML = `
+            <div class="user-card">
+                <div class="avatar">${ag.name.charAt(0)}</div>
+                <div class="user-details">
+                    <div class="user-name">${ag.name}</div>
+                    <div class="user-sub">${ag.tier} • ${ag.email}</div>
+                </div>
             </div>
-        </div>
-    `;
+        `;
+    } else {
+        document.getElementById('user-info').innerHTML = '';
+    }
 
-    const gauges = data.quotas.map(q => createGauge(q)).join('');
-    document.getElementById('quota-list').innerHTML = `<div class="gauge-grid">${gauges}</div>`;
+    // --- Render all service groups ---
+    // [ADDED] renderServiceGroup helper: renders a titled gauge group identical to Antigravity style
+    let html = '';
+    if (ag) {
+        html += renderServiceGroup('ANTIGRAVITY', ag);
+    }
+    if (data.claude) {
+        html += renderServiceGroup('CLAUDE CODE', data.claude);
+    }
+    if (data.codex) {
+        html += renderServiceGroup('CODEX', data.codex);
+    }
 
+    document.getElementById('quota-list').innerHTML = html;
+
+    if (data.antigravity && data.antigravity.autoClick) {
+        renderAutoClick(data.antigravity.autoClick);
+    }
     if (data.autoClick) {
         renderAutoClick(data.autoClick);
     }
 }
+
+// [ADDED] Renders a single service group (title + user info row + gauges)
+// Uses exact same HTML/CSS structure as original Antigravity rendering
+function renderServiceGroup(title, status) {
+    if (!status) { return ''; }
+
+    const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
+    const infoLine = `${status.tier} • ${status.email}`;
+
+    let gaugesHtml = '';
+    if (isAuthenticated && status.quotas && status.quotas.length > 0) {
+        gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q => createGauge(q)).join('')}</div>`;
+    } else if (!isAuthenticated) {
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${status.email}</p>`;
+    }
+
+    return `
+        <div class="service-group">
+            <div class="group-header">${title}</div>
+            <div class="service-info">${infoLine}</div>
+            ${gaugesHtml}
+        </div>
+    `;
+}
+
 
 function renderAutoClick(config) {
     let container = document.getElementById('automation-module');
@@ -142,6 +190,9 @@ function createGauge(quota) {
     const filled = C * (pct / 100);
     const dash = `${filled} ${C}`;
 
+    // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
+    const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
+
     return `
         <div class="gauge-item">
             <svg class="gauge-svg" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
@@ -151,7 +202,7 @@ function createGauge(quota) {
                     stroke-dasharray="${dash}"
                     stroke-dashoffset="0"
                     transform="rotate(-90 40 40)"/>
-                <text class="gauge-pct" x="40" y="40">${pct}%</text>
+                <text class="gauge-pct" x="40" y="40">${centerText}</text>
             </svg>
             <div class="gauge-label">${shortLabel(quota.label)}</div>
             <div class="gauge-time">${formatTime(quota.resetTime)}</div>

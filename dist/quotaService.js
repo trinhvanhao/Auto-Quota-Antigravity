@@ -1,98 +1,101 @@
-import * as http from 'http';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import * as vscode from 'vscode';
-import * as fs from 'fs';
-
-const execAsync = promisify(exec);
-
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.QuotaService = void 0;
+const http = __importStar(require("http"));
+const child_process_1 = require("child_process");
+const util_1 = require("util");
+const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("fs"));
+const execAsync = (0, util_1.promisify)(child_process_1.exec);
 // [ADDED] Utility: run a command with timeout, always using powershell.exe on Windows
-async function execWithTimeout(command: string, timeoutMs: number = 8000): Promise<{ stdout: string, stderr: string }> {
+async function execWithTimeout(command, timeoutMs = 8000) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
             reject(new Error(`Command timed out after ${timeoutMs}ms`));
         }, timeoutMs);
-        exec(command, { shell: 'powershell.exe' }, (error, stdout, stderr) => {
+        (0, child_process_1.exec)(command, { shell: 'powershell.exe' }, (error, stdout, stderr) => {
             clearTimeout(timer);
             if (error) {
-                (error as any).stdout = stdout;
-                (error as any).stderr = stderr;
+                error.stdout = stdout;
+                error.stderr = stderr;
                 reject(error);
-            } else {
+            }
+            else {
                 resolve({ stdout, stderr });
             }
         });
     });
 }
-
-export interface QuotaInfo {
-    label: string;
-    remaining: number;
-    resetTime: string;
-    themeColor?: string;
-    absResetTime?: string;
-    // [ADDED] Optional raw value for display (e.g. "23" or "20%")
-    displayValue?: string;
-}
-
-export interface UserStatus {
-    name: string;
-    email: string;
-    tier: string;
-    quotas: QuotaInfo[];
-    // [ADDED] Optional - used by Claude/Codex groups to show login prompt
-    isAuthenticated?: boolean;
-    error?: string;
-}
-
-// [ADDED] New interface for multi-service dashboard
-export interface DashboardData {
-    antigravity: UserStatus | null;
-    claude: UserStatus | null;
-    codex: UserStatus | null;
-    autoClick?: any;
-}
-
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
-
-export class QuotaService {
-    private serverInfo: { port: number, token: string } | null = null;
-    private discovering: Promise<boolean> | null = null;
+class QuotaService {
+    serverInfo = null;
+    discovering = null;
     // [ADDED] Optional logger
-    private logger?: vscode.OutputChannel;
-
-    constructor(logger?: vscode.OutputChannel) {
+    logger;
+    constructor(logger) {
         this.logger = logger;
     }
-
-    private log(msg: string) {
+    log(msg) {
         this.logger?.appendLine(`[${new Date().toLocaleTimeString()}] [QuotaService] ${msg}`);
     }
-
-    async discoverLocalServer(): Promise<boolean> {
-        if (this.discovering) return this.discovering;
-
+    async discoverLocalServer() {
+        if (this.discovering)
+            return this.discovering;
         this.discovering = (async () => {
             try {
                 const command = 'powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'csrf_token\' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
                 const { stdout } = await execAsync(command);
-                if (!stdout || stdout.trim() === "" || stdout.trim() === "[]") return false;
-
-                let processes: any[] = [];
+                if (!stdout || stdout.trim() === "" || stdout.trim() === "[]")
+                    return false;
+                let processes = [];
                 try {
                     const parsed = JSON.parse(stdout.trim());
                     processes = Array.isArray(parsed) ? parsed : [parsed];
-                } catch { return false; }
-
+                }
+                catch {
+                    return false;
+                }
                 for (const proc of processes) {
                     const cmdLine = proc.CommandLine || "";
                     const csrfMatch = cmdLine.match(/--csrf_token[\s=]+(?:["']?)([a-zA-Z0-9\-_.]+)(?:["']?)/);
-                    if (!csrfMatch) continue;
-
+                    if (!csrfMatch)
+                        continue;
                     const pid = proc.ProcessId;
                     const token = csrfMatch[1];
                     const listeningPorts = await this.getListeningPorts(pid);
-
                     for (const port of listeningPorts) {
                         if (await this.testConnection(port, token)) {
                             this.serverInfo = { port, token };
@@ -100,26 +103,28 @@ export class QuotaService {
                         }
                     }
                 }
-            } catch (e) {
+            }
+            catch (e) {
                 console.error('[SQM] Discovery failed:', e);
-            } finally {
+            }
+            finally {
                 this.discovering = null;
             }
             return false;
         })();
-
         return this.discovering;
     }
-
-    private async getListeningPorts(pid: number): Promise<number[]> {
+    async getListeningPorts(pid) {
         try {
             const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
             const { stdout } = await execAsync(cmd);
             return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
-        } catch { return []; }
+        }
+        catch {
+            return [];
+        }
     }
-
-    private async testConnection(port: number, token: string): Promise<boolean> {
+    async testConnection(port, token) {
         return new Promise((resolve) => {
             const options = {
                 hostname: '127.0.0.1', port, path: API_PATH, method: 'POST',
@@ -137,32 +142,38 @@ export class QuotaService {
             req.end();
         });
     }
-
-    async fetchStatus(): Promise<UserStatus | null> {
+    async fetchStatus() {
         if (!this.serverInfo) {
             const found = await this.discoverLocalServer();
-            if (!found) return null;
+            if (!found)
+                return null;
         }
-
         try {
             const options = {
-                hostname: '127.0.0.1', port: this.serverInfo!.port, path: API_PATH, method: 'POST',
+                hostname: '127.0.0.1', port: this.serverInfo.port, path: API_PATH, method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Codeium-Csrf-Token': this.serverInfo!.token,
+                    'X-Codeium-Csrf-Token': this.serverInfo.token,
                     'Connect-Protocol-Version': '1'
                 },
                 timeout: 5000
             };
-
             return new Promise((resolve, reject) => {
                 const req = http.request(options, (res) => {
                     let data = '';
                     res.on('data', chunk => data += chunk);
                     res.on('end', () => {
                         if (res.statusCode === 200) {
-                            try { resolve(this.parseResponse(JSON.parse(data))); } catch (e) { reject(e); }
-                        } else { reject(new Error(`HTTP ${res.statusCode}`)); }
+                            try {
+                                resolve(this.parseResponse(JSON.parse(data)));
+                            }
+                            catch (e) {
+                                reject(e);
+                            }
+                        }
+                        else {
+                            reject(new Error(`HTTP ${res.statusCode}`));
+                        }
                     });
                 });
                 req.on('error', reject);
@@ -170,41 +181,44 @@ export class QuotaService {
                 req.write(JSON.stringify({ wrapper_data: {} }));
                 req.end();
             });
-        } catch (e) {
+        }
+        catch (e) {
             this.serverInfo = null;
             return null;
         }
     }
-
-    private parseResponse(resp: any): UserStatus {
+    parseResponse(resp) {
         const user = resp.userStatus;
         const modelConfigs = user?.cascadeModelConfigData?.clientModelConfigs || [];
-        const quotas: QuotaInfo[] = modelConfigs
-            .filter((m: any) => m.quotaInfo)
-            .map((m: any) => {
-                const resetTimeStr = m.quotaInfo.resetTime;
-                let resetLabel = 'Ready';
-                let absResetLabel = '';
-                if (resetTimeStr && resetTimeStr !== 'Ready') {
-                    const resetDate = new Date(resetTimeStr);
-                    const diffMs = resetDate.getTime() - new Date().getTime();
-                    if (diffMs > 0) {
-                        const mins = Math.floor(diffMs / 60000);
-                        resetLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-                        // Absolute time format: (13h00)
-                        const absHours = resetDate.getHours().toString().padStart(2, '0');
-                        const absMins = resetDate.getMinutes().toString().padStart(2, '0');
-                        absResetLabel = `(${absHours}h${absMins})`;
-                    } else { resetLabel = 'Refreshing...'; }
+        const quotas = modelConfigs
+            .filter((m) => m.quotaInfo)
+            .map((m) => {
+            const resetTimeStr = m.quotaInfo.resetTime;
+            let resetLabel = 'Ready';
+            let absResetLabel = '';
+            if (resetTimeStr && resetTimeStr !== 'Ready') {
+                const resetDate = new Date(resetTimeStr);
+                const diffMs = resetDate.getTime() - new Date().getTime();
+                if (diffMs > 0) {
+                    const mins = Math.floor(diffMs / 60000);
+                    resetLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                    // Absolute time format: (13h00)
+                    const absHours = resetDate.getHours().toString().padStart(2, '0');
+                    const absMins = resetDate.getMinutes().toString().padStart(2, '0');
+                    absResetLabel = `(${absHours}h${absMins})`;
                 }
-                return {
-                    label: m.label,
-                    remaining: (m.quotaInfo.remainingFraction || 0) * 100,
-                    resetTime: resetLabel,
-                    absResetTime: absResetLabel,
-                    themeColor: m.label.includes('Gemini') ? '#40C4FF' : (m.label.includes('Claude') ? '#FFAB40' : '#69F0AE')
-                };
-            });
+                else {
+                    resetLabel = 'Refreshing...';
+                }
+            }
+            return {
+                label: m.label,
+                remaining: (m.quotaInfo.remainingFraction || 0) * 100,
+                resetTime: resetLabel,
+                absResetTime: absResetLabel,
+                themeColor: m.label.includes('Gemini') ? '#40C4FF' : (m.label.includes('Claude') ? '#FFAB40' : '#69F0AE')
+            };
+        });
         return {
             name: user?.name || 'User',
             email: user?.email || '',
@@ -212,9 +226,8 @@ export class QuotaService {
             quotas
         };
     }
-
     // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
-    async fetchClaudeStatus(): Promise<UserStatus | null> {
+    async fetchClaudeStatus() {
         this.log("Fetching Claude Status...");
         try {
             // Find claude.exe via VS Code Extension API first
@@ -234,25 +247,26 @@ export class QuotaService {
                     try {
                         const cmd = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter 'claude.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
                         const { stdout } = await execWithTimeout(cmd, 6000);
-                        if (stdout && stdout.trim()) { binPath = stdout.trim(); break; }
-                    } catch { /* ignore */ }
+                        if (stdout && stdout.trim()) {
+                            binPath = stdout.trim();
+                            break;
+                        }
+                    }
+                    catch { /* ignore */ }
                 }
             }
             if (!binPath) {
                 this.log("Claude binary not found.");
                 return { name: "Claude Code", email: "Extension not found", tier: "N/A", quotas: [], isAuthenticated: false };
             }
-
             // Run: claude auth status --json
             const cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
             const { stdout } = await execWithTimeout(cmd, 6000);
             const status = JSON.parse(stdout.trim());
-
             if (!status.loggedIn) {
                 this.log("Claude: Not logged in.");
                 return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
             }
-
             this.log(`Claude: Logged in as ${status.email}`);
             return {
                 name: "Claude Code",
@@ -264,14 +278,14 @@ export class QuotaService {
                 ],
                 isAuthenticated: true
             };
-        } catch (e: any) {
+        }
+        catch (e) {
             this.log(`Claude Status error: ${e.message}`);
             return { name: "Claude Code", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
         }
     }
-
     // ─── [ADDED] Codex Status ────────────────────────────────────────────────
-    async fetchCodexStatus(): Promise<UserStatus | null> {
+    async fetchCodexStatus() {
         this.log("Fetching Codex Status...");
         try {
             // Check if Codex extension is installed in Antigravity
@@ -281,17 +295,14 @@ export class QuotaService {
                 return { name: "Codex", email: "Extension not installed", tier: "N/A", quotas: [], isAuthenticated: false };
             }
             this.log(`Codex extension found at: ${ext.extensionPath}`);
-
             // Codex Desktop stores its state at ~/.codex/ - use that to detect login
             const userProfile = process.env.USERPROFILE || "";
             const stateFile = `${userProfile}\\.codex\\.codex-global-state.json`;
             const configFile = `${userProfile}\\.codex\\config.toml`;
-
             if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
                 this.log("Codex state files not found - user not logged in.");
                 return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
             }
-
             this.log("Codex: Logged in (state files found).");
             return {
                 name: "Codex",
@@ -303,14 +314,14 @@ export class QuotaService {
                 ],
                 isAuthenticated: true
             };
-        } catch (e: any) {
+        }
+        catch (e) {
             this.log(`Codex Status error: ${e.message}`);
             return { name: "Codex", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
         }
     }
-
     // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
-    async fetchDashboard(): Promise<DashboardData> {
+    async fetchDashboard() {
         const [antigravity, claude, codex] = await Promise.all([
             this.fetchStatus(),
             this.fetchClaudeStatus(),
@@ -319,3 +330,5 @@ export class QuotaService {
         return { antigravity, claude, codex };
     }
 }
+exports.QuotaService = QuotaService;
+//# sourceMappingURL=quotaService.js.map
