@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     // Click opens the sidebar focus
     statusBarItem.command = "sqm.sidebar.focus";
-    statusBarItem.text = "$(dashboard) AG Manager";
+    statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
@@ -213,7 +213,7 @@ function refreshStatusBar() {
         groupsText += `  Codex ${color.dot}`;
     }
 
-    statusBarItem.text = `$(dashboard)  ${groupsText || 'AG Manager'}`;
+    statusBarItem.text = `$(dashboard)  ${groupsText || 'Auto Quota Antigravity'}`;
 
     // Beautiful Tooltip
     const svg = buildTooltipSVG(latestQuotaData);

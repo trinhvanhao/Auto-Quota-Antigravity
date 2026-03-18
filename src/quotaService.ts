@@ -3,16 +3,19 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 const execAsync = promisify(exec);
 
-// [ADDED] Utility: run a command with timeout, always using powershell.exe on Windows
+// [ADDED] Utility: run a command with timeout, cross-platform
 async function execWithTimeout(command: string, timeoutMs: number = 8000): Promise<{ stdout: string, stderr: string }> {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
             reject(new Error(`Command timed out after ${timeoutMs}ms`));
         }, timeoutMs);
-        exec(command, { shell: 'powershell.exe' }, (error, stdout, stderr) => {
+        const options = process.platform === 'win32' ? { shell: 'powershell.exe' } : {};
+        exec(command, options, (error, stdout, stderr) => {
             clearTimeout(timer);
             if (error) {
                 (error as any).stdout = stdout;
@@ -77,8 +80,25 @@ export class QuotaService {
 
         this.discovering = (async () => {
             try {
-                const command = 'powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'csrf_token\' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
-                const { stdout } = await execAsync(command);
+                let stdout = "";
+                if (process.platform === 'win32') {
+                    const command = 'powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'csrf_token\' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
+                    const res = await execAsync(command);
+                    stdout = res.stdout;
+                } else {
+                    const command = 'ps -eo pid,command | grep csrf_token | grep -v grep';
+                    const res = await execAsync(command);
+                    const lines = res.stdout.trim().split('\n');
+                    const arr = lines.map(line => {
+                        const match = line.trim().match(/^(\d+)\s+(.+)$/);
+                        if (match) {
+                            return { ProcessId: parseInt(match[1]), CommandLine: match[2] };
+                        }
+                        return null;
+                    }).filter(Boolean);
+                    stdout = JSON.stringify(arr);
+                }
+
                 if (!stdout || stdout.trim() === "" || stdout.trim() === "[]") return false;
 
                 let processes: any[] = [];
@@ -116,9 +136,15 @@ export class QuotaService {
 
     private async getListeningPorts(pid: number): Promise<number[]> {
         try {
-            const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
-            const { stdout } = await execAsync(cmd);
-            return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
+            if (process.platform === 'win32') {
+                const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
+                const { stdout } = await execAsync(cmd);
+                return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
+            } else {
+                const cmd = `lsof -a -p ${pid} -i4TCP -sTCP:LISTEN -P -n | awk 'NR>1 {print $9}' | awk -F':' '{print $NF}' | sort -u`;
+                const { stdout } = await execAsync(cmd);
+                return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
+            }
         } catch { return []; }
     }
 
@@ -220,11 +246,12 @@ export class QuotaService {
     async fetchClaudeStatus(): Promise<UserStatus | null> {
         this.log("Fetching Claude Status...");
         try {
-            // Find claude.exe via VS Code Extension API first
+            // Find claude via VS Code Extension API first
             let binPath = "";
+            const exeName = process.platform === 'win32' ? 'claude.exe' : 'claude';
             const ext = vscode.extensions.getExtension("anthropic.claude-code");
             if (ext) {
-                const candidate = ext.extensionPath + "\\resources\\native-binary\\claude.exe";
+                const candidate = path.join(ext.extensionPath, 'resources', 'native-binary', exeName);
                 if (fs.existsSync(candidate)) {
                     binPath = candidate;
                     this.log(`Claude binary found at: ${binPath}`);
@@ -232,10 +259,15 @@ export class QuotaService {
             }
             // Fallback: search in extensions dirs
             if (!binPath) {
-                const userProfile = process.env.USERPROFILE || "";
-                for (const dir of [`${userProfile}\\.antigravity\\extensions`, `${userProfile}\\.vscode\\extensions`]) {
+                const home = os.homedir();
+                for (const dir of [path.join(home, '.antigravity', 'extensions'), path.join(home, '.vscode', 'extensions')]) {
                     try {
-                        const cmd = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter 'claude.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
+                        let cmd = '';
+                        if (process.platform === 'win32') {
+                            cmd = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
+                        } else {
+                            cmd = `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
+                        }
                         const { stdout } = await execWithTimeout(cmd, 6000);
                         if (stdout && stdout.trim()) { binPath = stdout.trim(); break; }
                     } catch { /* ignore */ }
@@ -247,7 +279,12 @@ export class QuotaService {
             }
 
             // Run: claude auth status --json
-            const cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
+            let cmd = '';
+            if (process.platform === 'win32') {
+                cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
+            } else {
+                cmd = `"${binPath}" auth status --json`;
+            }
             const { stdout } = await execWithTimeout(cmd, 6000);
             const status = JSON.parse(stdout.trim());
 
@@ -286,9 +323,9 @@ export class QuotaService {
             this.log(`Codex extension found at: ${ext.extensionPath}`);
 
             // Codex Desktop stores its state at ~/.codex/ - use that to detect login
-            const userProfile = process.env.USERPROFILE || "";
-            const stateFile = `${userProfile}\\.codex\\.codex-global-state.json`;
-            const configFile = `${userProfile}\\.codex\\config.toml`;
+            const home = os.homedir();
+            const stateFile = path.join(home, '.codex', '.codex-global-state.json');
+            const configFile = path.join(home, '.codex', 'config.toml');
 
             if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
                 this.log("Codex state files not found - user not logged in.");
@@ -322,3 +359,4 @@ export class QuotaService {
         return { antigravity, claude, codex };
     }
 }
+

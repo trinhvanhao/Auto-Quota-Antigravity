@@ -43,13 +43,16 @@ var import_child_process = require("child_process");
 var import_util = require("util");
 var vscode = __toESM(require("vscode"));
 var fs = __toESM(require("fs"));
+var os = __toESM(require("os"));
+var path = __toESM(require("path"));
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 async function execWithTimeout(command, timeoutMs = 8e3) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`Command timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    (0, import_child_process.exec)(command, { shell: "powershell.exe" }, (error, stdout, stderr) => {
+    const options = process.platform === "win32" ? { shell: "powershell.exe" } : {};
+    (0, import_child_process.exec)(command, options, (error, stdout, stderr) => {
       clearTimeout(timer);
       if (error) {
         error.stdout = stdout;
@@ -77,8 +80,24 @@ var QuotaService = class {
     if (this.discovering) return this.discovering;
     this.discovering = (async () => {
       try {
-        const command = `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'csrf_token' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"`;
-        const { stdout } = await execAsync(command);
+        let stdout = "";
+        if (process.platform === "win32") {
+          const command = `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'csrf_token' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"`;
+          const res = await execAsync(command);
+          stdout = res.stdout;
+        } else {
+          const command = "ps -eo pid,command | grep csrf_token | grep -v grep";
+          const res = await execAsync(command);
+          const lines = res.stdout.trim().split("\n");
+          const arr = lines.map((line) => {
+            const match = line.trim().match(/^(\d+)\s+(.+)$/);
+            if (match) {
+              return { ProcessId: parseInt(match[1]), CommandLine: match[2] };
+            }
+            return null;
+          }).filter(Boolean);
+          stdout = JSON.stringify(arr);
+        }
         if (!stdout || stdout.trim() === "" || stdout.trim() === "[]") return false;
         let processes = [];
         try {
@@ -112,9 +131,15 @@ var QuotaService = class {
   }
   async getListeningPorts(pid) {
     try {
-      const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
-      const { stdout } = await execAsync(cmd);
-      return stdout.trim().split(/\r?\n/).map((p) => parseInt(p.trim())).filter((p) => !isNaN(p) && p > 1024);
+      if (process.platform === "win32") {
+        const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
+        const { stdout } = await execAsync(cmd);
+        return stdout.trim().split(/\r?\n/).map((p) => parseInt(p.trim())).filter((p) => !isNaN(p) && p > 1024);
+      } else {
+        const cmd = `lsof -a -p ${pid} -i4TCP -sTCP:LISTEN -P -n | awk 'NR>1 {print $9}' | awk -F':' '{print $NF}' | sort -u`;
+        const { stdout } = await execAsync(cmd);
+        return stdout.trim().split(/\r?\n/).map((p) => parseInt(p.trim())).filter((p) => !isNaN(p) && p > 1024);
+      }
     } catch {
       return [];
     }
@@ -230,19 +255,25 @@ var QuotaService = class {
     this.log("Fetching Claude Status...");
     try {
       let binPath = "";
+      const exeName = process.platform === "win32" ? "claude.exe" : "claude";
       const ext = vscode.extensions.getExtension("anthropic.claude-code");
       if (ext) {
-        const candidate = ext.extensionPath + "\\resources\\native-binary\\claude.exe";
+        const candidate = path.join(ext.extensionPath, "resources", "native-binary", exeName);
         if (fs.existsSync(candidate)) {
           binPath = candidate;
           this.log(`Claude binary found at: ${binPath}`);
         }
       }
       if (!binPath) {
-        const userProfile = process.env.USERPROFILE || "";
-        for (const dir of [`${userProfile}\\.antigravity\\extensions`, `${userProfile}\\.vscode\\extensions`]) {
+        const home = os.homedir();
+        for (const dir of [path.join(home, ".antigravity", "extensions"), path.join(home, ".vscode", "extensions")]) {
           try {
-            const cmd2 = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter 'claude.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
+            let cmd2 = "";
+            if (process.platform === "win32") {
+              cmd2 = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
+            } else {
+              cmd2 = `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
+            }
             const { stdout: stdout2 } = await execWithTimeout(cmd2, 6e3);
             if (stdout2 && stdout2.trim()) {
               binPath = stdout2.trim();
@@ -256,7 +287,12 @@ var QuotaService = class {
         this.log("Claude binary not found.");
         return { name: "Claude Code", email: "Extension not found", tier: "N/A", quotas: [], isAuthenticated: false };
       }
-      const cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
+      let cmd = "";
+      if (process.platform === "win32") {
+        cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
+      } else {
+        cmd = `"${binPath}" auth status --json`;
+      }
       const { stdout } = await execWithTimeout(cmd, 6e3);
       const status = JSON.parse(stdout.trim());
       if (!status.loggedIn) {
@@ -289,9 +325,9 @@ var QuotaService = class {
         return { name: "Codex", email: "Extension not installed", tier: "N/A", quotas: [], isAuthenticated: false };
       }
       this.log(`Codex extension found at: ${ext.extensionPath}`);
-      const userProfile = process.env.USERPROFILE || "";
-      const stateFile = `${userProfile}\\.codex\\.codex-global-state.json`;
-      const configFile = `${userProfile}\\.codex\\config.toml`;
+      const home = os.homedir();
+      const stateFile = path.join(home, ".codex", ".codex-global-state.json");
+      const configFile = path.join(home, ".codex", "config.toml");
       if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
         this.log("Codex state files not found - user not logged in.");
         return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
@@ -394,8 +430,8 @@ var SidebarProvider = class _SidebarProvider {
 // src/automationService.ts
 var vscode3 = __toESM(require("vscode"));
 var fs2 = __toESM(require("fs"));
-var path = __toESM(require("path"));
-var os = __toESM(require("os"));
+var path2 = __toESM(require("path"));
+var os2 = __toESM(require("os"));
 var crypto = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
 var http2 = __toESM(require("http"));
@@ -547,9 +583,9 @@ var AutomationService = class _AutomationService {
   getTargetFile() {
     const root = vscode3.env.appRoot;
     const paths = [
-      path.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
-      path.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
-      path.join(root, "out/vs/workbench/workbench.html")
+      path2.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
+      path2.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
+      path2.join(root, "out/vs/workbench/workbench.html")
     ];
     return paths.find((p) => fs2.existsSync(p)) || null;
   }
@@ -561,12 +597,12 @@ var AutomationService = class _AutomationService {
     const target = this.getTargetFile();
     if (!target) return;
     try {
-      const dir = path.dirname(target);
-      const src = path.join(this._context.extensionPath, "src", "automationCore.js");
+      const dir = path2.dirname(target);
+      const src = path2.join(this._context.extensionPath, "src", "automationCore.js");
       let code = fs2.readFileSync(src, "utf8");
       code = code.replace("__RULES__", JSON.stringify(this._rules));
       code = code.replace("__STATE__", String(this._isActive));
-      const finalScriptPath = path.join(dir, "ag-automation-bridge.js");
+      const finalScriptPath = path2.join(dir, "ag-automation-bridge.js");
       this.writeSafe(finalScriptPath, code);
       let html = fs2.readFileSync(target, "utf8");
       if (!html.includes(_AutomationService.SCRIPT_TAG_ID)) {
@@ -587,7 +623,7 @@ var AutomationService = class _AutomationService {
       fs2.writeFileSync(p, c, "utf8");
     } catch (e) {
       if (process.platform === "win32") throw new Error("Y\xEAu c\u1EA7u Administrator \u0111\u1EC3 c\xE0i \u0111\u1EB7t t\xEDnh n\u0103ng t\u1EF1 \u0111\u1ED9ng.");
-      const tmp = path.join(os.tmpdir(), `ag_tmp_${Date.now()}`);
+      const tmp = path2.join(os2.tmpdir(), `ag_tmp_${Date.now()}`);
       fs2.writeFileSync(tmp, c);
       const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'` : `pkexec cp ${tmp} ${p}`;
       (0, import_child_process2.execSync)(cmd);
@@ -596,11 +632,11 @@ var AutomationService = class _AutomationService {
   }
   recalculateHashes() {
     try {
-      const pJson = path.join(vscode3.env.appRoot, "product.json");
+      const pJson = path2.join(vscode3.env.appRoot, "product.json");
       const data = JSON.parse(fs2.readFileSync(pJson, "utf8"));
       if (!data.checksums) return;
       Object.keys(data.checksums).forEach((k) => {
-        const fullPath = path.join(vscode3.env.appRoot, "out", k.split("/").join(path.sep));
+        const fullPath = path2.join(vscode3.env.appRoot, "out", k.split("/").join(path2.sep));
         if (fs2.existsSync(fullPath)) {
           const hash = crypto.createHash("sha256").update(fs2.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
           data.checksums[k] = hash;
@@ -635,7 +671,7 @@ function activate(context) {
   );
   statusBarItem = vscode4.window.createStatusBarItem(vscode4.StatusBarAlignment.Right, 100);
   statusBarItem.command = "sqm.sidebar.focus";
-  statusBarItem.text = "$(dashboard) AG Manager";
+  statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
@@ -767,7 +803,7 @@ function refreshStatusBar() {
     const color = getQuotaColor(cxQuota.remaining, "down");
     groupsText += `  Codex ${color.dot}`;
   }
-  statusBarItem.text = `$(dashboard)  ${groupsText || "AG Manager"}`;
+  statusBarItem.text = `$(dashboard)  ${groupsText || "Auto Quota Antigravity"}`;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
   const tooltip = new vscode4.MarkdownString();

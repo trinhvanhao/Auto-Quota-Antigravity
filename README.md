@@ -1,12 +1,12 @@
-# AG Manager (Antigravity & AI Quota Manager)
+# Auto Quota Antigravity
 
 [English Below]
 
-**AG Manager** là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) của tất cả các dịch vụ AI hàng đầu ngay trong tầm tay.
+**Auto Quota Antigravity** là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) của tất cả các dịch vụ AI hàng đầu ngay trong tầm tay.
 
 ---
 
-**AG Manager** is the ultimate extension for **Antigravity IDE** users, helping you monitor and manage AI model quotas for all leading services at your fingertips.
+**Auto Quota Antigravity** is the ultimate extension for **Antigravity IDE** users, helping you monitor and manage AI model quotas for all leading services at your fingertips.
 
 ## 📸 Previews
 

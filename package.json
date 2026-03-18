@@ -1,6 +1,6 @@
 {
-    "name": "ag-manager",
-    "displayName": "AG Manager",
+    "name": "auto-quota-antigravity",
+    "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
     "version": "1.2.1",
     "publisher": "BiViPi",
@@ -28,7 +28,7 @@
             "activitybar": [
                 {
                     "id": "sqm-explorer",
-                    "title": "AG Manager",
+                    "title": "Auto Quota Antigravity",
                     "icon": "$(dashboard)"
                 }
             ]
@@ -45,12 +45,12 @@
         "commands": [
             {
                 "command": "sqm.refresh",
-                "title": "AG Manager: Refresh Quotas",
+                "title": "Auto Quota Antigravity: Refresh Quotas",
                 "icon": "$(refresh)"
             }
         ],
         "configuration": {
-            "title": "AG Manager",
+            "title": "Auto Quota Antigravity",
             "properties": {
                 "sqm.refreshInterval": {
                     "type": "number",
