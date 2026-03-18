@@ -10,10 +10,6 @@
 
 ## 📸 Previews
 
-| Dashboard | Status Bar Popup |
-|-----------|------------------|
-| ![Dashboard](https://raw.githubusercontent.com/BiViPi/AG-Manager/main/logo/dashboard.png) | ![Popup](https://raw.githubusercontent.com/BiViPi/AG-Manager/main/logo/popup.png) |
-
 ## 🚀 Tính năng nổi bật / Key Features
 
 ### 🇻🇳 Tiếng Việt
@@ -34,4 +30,3 @@
 - `sqm.enableNotifications`: (Default: true)
 
 ---
-*Developed by BiViPi - Optimized for your coding performance.*
