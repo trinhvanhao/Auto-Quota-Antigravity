@@ -3,7 +3,7 @@ import { QuotaService } from './quotaService';
 import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
 import { checkForUpdates } from './updater';
-import { DashboardData, AutoClickDiagnostics, ModelGroup, QuotaInfo, ClaudeSecrets } from './types';
+import { DashboardData, AutoClickDiagnostics, ModelGroup, QuotaInfo } from './types';
 import { formatTime, getQuotaColor } from './utils';
 
 let statusBarItem: vscode.StatusBarItem;
@@ -45,21 +45,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(logger);
 
     const quotaService = new QuotaService(logger);
-    globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService, context.secrets);
+    globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
     automationService = new AutomationService(context, logger);
-
-    // Migrate old plaintext credentials to SecretStorage (one-time)
-    migrateSecretsIfNeeded(context).then(secrets => {
-        quotaService.setSecrets(secrets);
-    });
-
-    // Listen for secret changes to update quotaService
-    context.subscriptions.push(
-        context.secrets.onDidChange(async () => {
-            const secrets = await loadSecrets(context.secrets);
-            quotaService.setSecrets(secrets);
-        })
-    );
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
@@ -317,31 +304,6 @@ function checkNotifications(data: DashboardData) {
     if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
 }
 
-async function loadSecrets(secrets: vscode.SecretStorage): Promise<ClaudeSecrets> {
-    const sessionKey = (await secrets.get('claude.sessionKey')) || '';
-    const cfClearance = (await secrets.get('claude.cfClearance')) || '';
-    return { sessionKey, cfClearance };
-}
-
-async function migrateSecretsIfNeeded(context: vscode.ExtensionContext): Promise<ClaudeSecrets> {
-    const secrets = context.secrets;
-    const config = vscode.workspace.getConfiguration('sqm');
-
-    // Migrate from plaintext settings to SecretStorage (one-time)
-    const oldSessionKey = config.get<string>('claude.sessionKey')?.trim() || '';
-    const oldCfClearance = config.get<string>('claude.cfClearance')?.trim() || '';
-
-    if (oldSessionKey) {
-        await secrets.store('claude.sessionKey', oldSessionKey);
-        await config.update('claude.sessionKey', undefined, vscode.ConfigurationTarget.Global);
-    }
-    if (oldCfClearance) {
-        await secrets.store('claude.cfClearance', oldCfClearance);
-        await config.update('claude.cfClearance', undefined, vscode.ConfigurationTarget.Global);
-    }
-
-    return loadSecrets(secrets);
-}
 
 export function deactivate() {
     if (refreshTimer) {

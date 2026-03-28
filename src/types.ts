@@ -56,7 +56,3 @@ export interface ModelGroup {
     models: string[];
 }
 
-export interface ClaudeSecrets {
-    sessionKey: string;
-    cfClearance: string;
-}

@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { QuotaInfo, UserStatus, DashboardData, ClaudeSecrets } from './types';
+import { QuotaInfo, UserStatus, DashboardData } from './types';
 
 export { QuotaInfo, UserStatus, DashboardData };
 
@@ -38,25 +38,17 @@ const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
 export class QuotaService {
     private serverInfo: { port: number, token: string } | null = null;
     private discovering: Promise<boolean> | null = null;
-    
+
     private cachedClaude: UserStatus | null = null;
     private claudeLastFetch: number = 0;
     private cachedCodex: UserStatus | null = null;
     private codexLastFetch: number = 0;
-    private readonly CACHE_TTL = 60000; // 60 seconds
+    private readonly CACHE_TTL = 120000; // 120 seconds (OAuth endpoint rate-limits aggressively)
 
-    private _secrets: ClaudeSecrets = { sessionKey: '', cfClearance: '' };
     private logger?: vscode.OutputChannel;
 
     constructor(logger?: vscode.OutputChannel) {
         this.logger = logger;
-    }
-
-    public setSecrets(secrets: ClaudeSecrets) {
-        this._secrets = secrets;
-        // Invalidate cache when secrets change
-        this.cachedClaude = null;
-        this.claudeLastFetch = 0;
     }
 
     private log(msg: string) {
@@ -95,28 +87,48 @@ export class QuotaService {
         return { organizationId, email, displayName, subscriptionType, usagePeriod };
     }
 
-    private async fetchClaudeUsage(sessionKey: string, organizationId: string, cfClearance: string = ''): Promise<any> {
-        let cookieStr = `sessionKey=${sessionKey}; lastActiveOrg=${organizationId}`;
-        if (cfClearance) {
-            cookieStr += `; cf_clearance=${cfClearance}`;
+    private async getClaudeOAuthToken(): Promise<{ accessToken: string; expiresAt: number } | null> {
+        try {
+            if (process.platform === 'darwin') {
+                // macOS: read from Keychain
+                const { stdout } = await execWithTimeout(
+                    'security find-generic-password -s "Claude Code-credentials" -w',
+                    5000
+                );
+                const creds = JSON.parse(stdout.trim());
+                const oauth = creds?.claudeAiOauth;
+                if (oauth?.accessToken) {
+                    return { accessToken: oauth.accessToken, expiresAt: oauth.expiresAt || 0 };
+                }
+            } else {
+                // Linux/Windows: read from ~/.claude/.credentials.json
+                const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
+                if (fs.existsSync(credPath)) {
+                    const raw = fs.readFileSync(credPath, 'utf8');
+                    const creds = JSON.parse(raw);
+                    const oauth = creds?.claudeAiOauth;
+                    if (oauth?.accessToken) {
+                        return { accessToken: oauth.accessToken, expiresAt: oauth.expiresAt || 0 };
+                    }
+                }
+            }
+        } catch (e: any) {
+            this.log(`OAuth token extraction failed: ${e?.message}`);
         }
+        return null;
+    }
 
+    private async fetchClaudeUsageOAuth(accessToken: string): Promise<any> {
         return new Promise((resolve, reject) => {
             const options: https.RequestOptions = {
                 method: 'GET',
-                hostname: 'claude.ai',
-                path: `/api/organizations/${organizationId}/usage`,
+                hostname: 'api.anthropic.com',
+                path: '/api/oauth/usage',
                 headers: {
-                    'accept': 'application/json',
-                    'content-type': 'application/json',
-                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                    'anthropic-client-platform': 'web_claude_ai',
-                    'origin': 'https://claude.ai',
-                    'referer': 'https://claude.ai/',
-                    'cookie': cookieStr,
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin'
+                    'Authorization': `Bearer ${accessToken}`,
+                    'anthropic-beta': 'oauth-2025-04-20',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'auto-quota-antigravity/1.4.0'
                 },
                 timeout: 10000
             };
@@ -125,21 +137,17 @@ export class QuotaService {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
-                    if (res.statusCode === 403) {
-                        const hint = cfClearance
-                            ? 'sessionKey or cf_clearance expired. Update from browser.'
-                            : 'Cloudflare blocked. Add cf_clearance cookie in settings.';
-                        return reject(new Error(`HTTP 403 — ${hint}`));
+                    if (res.statusCode === 429) {
+                        return reject(new Error('RATE_LIMITED'));
                     }
                     if (res.statusCode === 401) {
-                        return reject(new Error('HTTP 401 — Unauthorized. Check organizationId.'));
+                        return reject(new Error('OAuth token expired. Run any claude command to refresh.'));
                     }
                     if (res.statusCode !== 200) {
                         return reject(new Error(`HTTP ${res.statusCode}`));
                     }
                     try {
-                        const parsed = JSON.parse(data);
-                        resolve(parsed);
+                        resolve(JSON.parse(data));
                     } catch (e) {
                         reject(e);
                     }
@@ -155,46 +163,48 @@ export class QuotaService {
         const quotas: QuotaInfo[] = [];
         const five = usageData?.five_hour;
         const seven = usageData?.seven_day;
+        const sevenSonnet = usageData?.seven_day_sonnet;
+        const sevenOpus = usageData?.seven_day_opus;
 
-        const pushFive = () => {
-            if (!five) return;
-            // utilization is a fraction (0-1) from the API, convert to percentage
-            const raw = Number(five.utilization || 0);
-            const pct = Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+        const parseResetTime = (resetsAt: string | undefined): { resetLabel: string; absLabel: string } => {
+            if (!resetsAt) return { resetLabel: '', absLabel: '' };
+            try {
+                const resetDate = new Date(resetsAt);
+                const diffMs = resetDate.getTime() - Date.now();
+                if (diffMs <= 0) return { resetLabel: 'Refreshing...', absLabel: '' };
+                const mins = Math.floor(diffMs / 60000);
+                const resetLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                const absHours = resetDate.getHours().toString().padStart(2, '0');
+                const absMins = resetDate.getMinutes().toString().padStart(2, '0');
+                return { resetLabel, absLabel: `(${absHours}h${absMins})` };
+            } catch {
+                return { resetLabel: '', absLabel: '' };
+            }
+        };
+
+        const pushQuota = (data: any, label: string, color: string, defaultReset: string) => {
+            if (!data) return;
+            const pct = Math.max(0, Math.min(100, Number(data.utilization || 0)));
+            const { resetLabel, absLabel } = parseResetTime(data.resets_at);
             quotas.push({
-                label: 'Session (5hr)',
+                label,
                 remaining: pct,
                 displayValue: `${Math.round(pct)}%`,
-                resetTime: '5h',
-                themeColor: '#FFAB40',
+                resetTime: resetLabel || defaultReset,
+                absResetTime: absLabel,
+                themeColor: color,
                 style: 'fluid',
                 direction: 'up'
             });
         };
 
-        const pushSeven = () => {
-            if (!seven) return;
-            // utilization is a fraction (0-1) from the API, convert to percentage
-            const raw = Number(seven.utilization || 0);
-            const pct = Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
-            quotas.push({
-                label: 'Weekly (7day)',
-                remaining: pct,
-                displayValue: `${Math.round(pct)}%`,
-                resetTime: '7d',
-                themeColor: '#FF7043',
-                style: 'fluid',
-                direction: 'up'
-            });
-        };
-
-        if (usagePeriod === '5-hour') {
-            pushFive();
-        } else if (usagePeriod === '7-day') {
-            pushSeven();
-        } else {
-            pushFive();
-            pushSeven();
+        if (usagePeriod === '5-hour' || usagePeriod === 'both') {
+            pushQuota(five, 'Session (5hr)', '#FFAB40', '5h');
+        }
+        if (usagePeriod === '7-day' || usagePeriod === 'both') {
+            pushQuota(seven, 'Weekly (7day)', '#FF7043', '7d');
+            pushQuota(sevenSonnet, 'Sonnet (7day)', '#FFA726', '7d');
+            pushQuota(sevenOpus, 'Opus (7day)', '#AB47BC', '7d');
         }
 
         return quotas;
@@ -430,50 +440,40 @@ export class QuotaService {
             const email = authStatus?.email || localConfig.email || '';
             const tier = authStatus?.subscriptionType || localConfig.subscriptionType || 'Unknown';
             const displayName = localConfig.displayName || 'Claude Code';
-            const organizationId = authStatus?.orgId || localConfig.organizationId;
 
             if (!isLoggedIn) {
                 return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
             }
 
-            // Step 3: Try to fetch usage data (requires sessionKey + cf_clearance from SecretStorage)
-            const sessionKey = this._secrets.sessionKey;
-            const cfClearance = this._secrets.cfClearance;
-
-            if (!sessionKey || !organizationId) {
+            // Step 3: Get OAuth token and fetch usage via API
+            const oauthToken = await this.getClaudeOAuthToken();
+            if (!oauthToken) {
                 return {
-                    name: displayName,
-                    email,
-                    tier,
-                    quotas: [],
-                    isAuthenticated: true,
-                    error: !sessionKey
-                        ? "Add sessionKey + cf_clearance in settings to see usage %"
-                        : "Missing organizationId"
+                    name: displayName, email, tier,
+                    quotas: [], isAuthenticated: true,
+                    error: "OAuth token not found — run `claude auth login`"
                 };
             }
 
             let usageData: any;
             try {
-                usageData = await this.fetchClaudeUsage(sessionKey, organizationId, cfClearance);
+                usageData = await this.fetchClaudeUsageOAuth(oauthToken.accessToken);
             } catch (e: any) {
+                if (e?.message === 'RATE_LIMITED' && this.cachedClaude) {
+                    this.log("Rate limited — returning cached Claude data");
+                    return this.cachedClaude;
+                }
                 return {
-                    name: displayName,
-                    email,
-                    tier,
-                    quotas: [],
-                    isAuthenticated: true,
+                    name: displayName, email, tier,
+                    quotas: [], isAuthenticated: true,
                     error: e?.message || 'Usage fetch failed'
                 };
             }
 
             const quotas = this.buildClaudeQuotas(usageData, localConfig.usagePeriod);
             return {
-                name: displayName,
-                email,
-                tier,
-                quotas,
-                isAuthenticated: true,
+                name: displayName, email, tier,
+                quotas, isAuthenticated: true,
                 error: quotas.length === 0 ? "No usage data returned" : undefined
             };
         } catch (e: any) {
@@ -545,13 +545,21 @@ export class QuotaService {
             }
 
             this.log(`Codex: ${email} (${planType}), model: ${model}`);
+            const tierDisplay = planType.charAt(0).toUpperCase() + planType.slice(1);
             return {
                 name: "Codex",
                 email,
-                tier: planType.charAt(0).toUpperCase() + planType.slice(1),
-                quotas: [],
-                isAuthenticated: true,
-                error: `Model: ${model} — Usage tracking not available via API`
+                tier: tierDisplay,
+                quotas: [{
+                    label: 'Active Model',
+                    remaining: 0,
+                    displayValue: model,
+                    resetTime: '',
+                    themeColor: '#69F0AE',
+                    style: 'fluid',
+                    direction: 'up'
+                }],
+                isAuthenticated: true
             };
         } catch (e: any) {
             this.log(`Codex Status error: ${e.message}`);

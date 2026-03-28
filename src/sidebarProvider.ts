@@ -8,8 +8,6 @@ function getNonce(): string {
     return crypto.randomBytes(16).toString('hex');
 }
 
-const SECRET_KEYS = ['claude.sessionKey', 'claude.cfClearance'] as const;
-
 export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
 
@@ -17,8 +15,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        private readonly _quotaService: QuotaService,
-        private readonly _secrets: vscode.SecretStorage
+        private readonly _quotaService: QuotaService
     ) { }
 
     public resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -67,16 +64,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const sqm = vscode.workspace.getConfiguration('sqm');
         const ag = vscode.workspace.getConfiguration('ag-manager');
 
-        // Read secrets from SecretStorage (masked for display)
-        const sessionKey = (await this._secrets.get('claude.sessionKey')) || '';
-        const cfClearance = (await this._secrets.get('claude.cfClearance')) || '';
-
         this._view?.webview.postMessage({
             type: 'settings',
             settings: {
-                'claude.sessionKey': sessionKey,
-                'claude.cfClearance': cfClearance,
-                'claude.organizationId': sqm.get<string>('claude.organizationId') || '',
                 'claude.usagePeriod': sqm.get<string>('claude.usagePeriod') || 'both',
                 'refreshInterval': sqm.get<number>('refreshInterval') || 5,
                 'enableNotifications': sqm.get<boolean>('enableNotifications') !== false,
@@ -91,10 +81,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const target = vscode.ConfigurationTarget.Global;
 
         for (const [key, value] of Object.entries(settings)) {
-            // Store secrets in SecretStorage, not in settings.json
-            if (SECRET_KEYS.includes(key as typeof SECRET_KEYS[number])) {
-                await this._secrets.store(key, String(value));
-            } else if (key.startsWith('automation.')) {
+            if (key.startsWith('automation.')) {
                 await ag.update(key, value, target);
             } else {
                 await sqm.update(key, value, target);

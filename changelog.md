@@ -1,5 +1,21 @@
 # Changelog - AG Manager
 
+## [1.4.0] - 2026-03-28
+
+### Claude Code Quota — OAuth Migration
+- **OAuth Token Auth:** Replaced fragile cookie-based authentication (sessionKey + cf_clearance) with OAuth token from macOS Keychain / ~/.claude/.credentials.json. Quota data now fetches automatically without manual cookie setup.
+- **New API Endpoint:** Switched from `claude.ai/api/organizations/{orgId}/usage` to `api.anthropic.com/api/oauth/usage` — more reliable, no Cloudflare blocks.
+- **Model Breakdown:** Added per-model weekly usage (Sonnet 7day, Opus 7day) from the new API response.
+- **Reset Time Parsing:** Quota reset times now show precise countdown (e.g., "2h 15m (15h30)") instead of static "5h"/"7d".
+- **Rate Limit Handling:** Returns cached data on HTTP 429 instead of showing an error. Cache TTL increased to 120 seconds.
+
+### Codex Display
+- **Model Info Gauge:** Codex now shows the active model name as a visual gauge row instead of an error message.
+
+### Cleanup
+- **Removed Cookie Settings:** Removed sessionKey, cf_clearance, and organizationId from settings UI and configuration.
+- **Removed SecretStorage:** No longer stores or migrates browser cookies. All auth handled via OAuth.
+
 ## [1.3.1] - 2026-03-28
 
 ### Bug Fixes
